@@ -1,119 +1,136 @@
+"""
+API Flask para consultar negocios desde un archivo Excel y devolver
+resultados filtrados por ciudad, nombre y asentamiento.
+"""
+
 from flask import Flask, jsonify, request
 import pandas as pd
+import sqlite3
 
 app = Flask(__name__)
 
-archivo = "./code/datos.xlsx"
+ARCHIVO = "./code/datos.xlsx"
+DB_FILE = "./code/negocios.db"
+TABLE_NAME = "negocios"
 
-@app.route("/api/excel/negocio/<ciudad>")
-def obtener_datos_excel(ciudad = None):
-    columnas = ["nom_estab", "longitud", "latitud"]
+def get_db_connection():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
 
+@app.route("/api/sqlite/negocio/buscar/<ciudad>", methods=["GET"])
+def buscar_negocios_sqlite(ciudad=None):
+    """
+    Versión para SQL para buscar negocios por ciudad.
+    """
     try:
-        df = pd.read_excel(archivo, sheet_name=ciudad)
-
-        columnas_existentes = [col for col in columnas if col in df.columns]
-        columnas_no_encontradas = [col for col in columnas if col not in df.columns]
-
-        if columnas_no_encontradas:
-            print(f"⚠️ Columnas no encontradas: {columnas_no_encontradas}")
-
-        if not columnas_existentes:
-            return jsonify({"error": "No se encontraron las columnas solicitadas"}), 400
-
-        resultado = df[columnas_existentes]
-        return jsonify(resultado.to_dict(orient="records"))
-
-    except FileNotFoundError:
-        return jsonify({"error": f"No se encontró el archivo {archivo}"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/excel/negociotipo/<ciudad>")
-def obtener_negocio_tipo(ciudad=None):
-    columnas = ["nom_estab", "longitud", "latitud"]
-
-    try:
-        # Leer hoja según la ciudad
-        df = pd.read_excel(archivo, sheet_name=ciudad)
-
-        # Validar columnas
-        columnas_existentes = [col for col in columnas if col in df.columns]
-        columnas_no_encontradas = [col for col in columnas if col not in df.columns]
-
-        if columnas_no_encontradas:
-            print(f"⚠️ Columnas no encontradas: {columnas_no_encontradas}")
-
-        if not columnas_existentes:
-            return jsonify({"error": "No se encontraron las columnas solicitadas"}), 400
-
-        # --------------------------
-        # FILTRO POR NOMBRE
-        # --------------------------
-        nombre = request.args.get("nombre", None)
-
+        nombre = request.args.get("nombre", "")
+        asent = request.args.get("asent", "")
+        
+        conn = get_db_connection()
+        
+        query = f"""
+            SELECT nom_estab, longitud, latitud, nomb_asent, ciudad
+            FROM {TABLE_NAME}
+            WHERE ciudad = ? 
+        """
+        params = [ciudad]
+        
         if nombre:
-            df = df[df["nom_estab"].astype(str).str.contains(nombre, case=False, na=False)]
-
-        # Si después del filtro no hay resultados
-        if df.empty:
-            return jsonify({"mensaje": "No se encontraron coincidencias"}), 404
-
-        # Respuesta con columnas seleccionadas
-        resultado = df[columnas_existentes]
-        return jsonify(resultado.to_dict(orient="records"))
-
-    except FileNotFoundError:
-        return jsonify({"error": f"No se encontró el archivo {archivo}"}), 404
+            query += " AND nom_estab LIKE ?"
+            params.append(f"%{nombre}%")
+            
+        if asent:
+            query += " AND nomb_asent LIKE ?"
+            params.append(f"%{asent}%")
+        
+        cursor = conn.execute(query, params)
+        resultados = [dict(row) for row in cursor.fetchall()]
+        
+        conn.close()
+        
+        if not resultados:
+            return jsonify({
+                "mensaje": "No se encontraron resultados",
+                "ciudad": ciudad,
+                "filtros": {"nombre": nombre, "asent": asent}
+            }), 404
+            
+        return jsonify({
+            "total": len(resultados),
+            "resultados": resultados
+        })
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
-    return None
+        
+
 @app.route("/api/excel/negocio/buscar/<ciudad>")
 def buscar_negocios(ciudad=None):
+    """
+    Busca negocios dentro de una hoja del archivo Excel especificada por la ciudad.
+    
+    """
+
     columnas = ["nom_estab", "longitud", "latitud", "nomb_asent"]
 
     try:
-        # Cargar hoja del Excel
-        df = pd.read_excel(archivo, sheet_name=ciudad)
+        df = pd.read_excel(ARCHIVO, sheet_name=ciudad)
 
-        # Validar columnas necesarias
-        columnas_existentes = [col for col in columnas if col in df.columns]
+        columnas_existentes = [
+            col for col in columnas if col in df.columns
+        ]
         if not columnas_existentes:
-            return jsonify({"error": "Las columnas necesarias no existen en esta hoja"}), 400
+            return (
+                jsonify(
+                    {"error": "Las columnas necesarias no existen en esta hoja"}
+                ),
+                400,
+            )
 
-        # -----------------------------
-        # Filtros recibidos por query
-        # -----------------------------
+
         nombre = request.args.get("nombre")
         asent = request.args.get("asent")
 
-        # Filtro por nombre del establecimiento
         if nombre:
-            df = df[df["nom_estab"].astype(str).str.contains(nombre, case=False, na=False)]
+            df = df[
+                df["nom_estab"]
+                .astype(str)
+                .str.contains(nombre, case=False, na=False)
+            ]
 
-        # Filtro por asentamiento / colonia
         if asent:
-            df = df[df["nomb_asent"].astype(str).str.contains(asent, case=False, na=False)]
+            df = df[
+                df["nomb_asent"]
+                .astype(str)
+                .str.contains(asent, case=False, na=False)
+            ]
 
-        # Si no hay coincidencias
         if df.empty:
-            return jsonify({"mensaje": "No se encontraron coincidencias con los filtros proporcionados"}), 404
+            return (
+                jsonify(
+                    {
+                        "mensaje": "No se encontraron coincidencias con los filtros proporcionados"
+                    }
+                ),
+                404,
+            )
 
-        # Respuesta final
         resultado = df[columnas_existentes]
         return jsonify(resultado.to_dict(orient="records"))
 
     except FileNotFoundError:
-        return jsonify({"error": f"No se encontró el archivo {archivo}"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"No se encontró el archivo {ARCHIVO}"}), 404
+
+    except Exception as exc: 
+        return jsonify({"error": str(exc)}), 500
+
 
 @app.route("/")
 def inicio():
-    return "<h2>Servidor Flask funcionando correctamente</h2>"
+    return "<h2>Flask funcionando </h2>"
+
 
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
