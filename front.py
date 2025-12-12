@@ -14,8 +14,8 @@ from typing import Optional, Tuple, Dict
 # -----------------------------------------
 st.set_page_config(page_title="Mapa de Negocios - StatisticsBusiness", layout="wide")
 
-API_AUTH = "http://localhost/api/auth"
-API_BASE = "http://localhost/api/sqlite/negocio"
+API_AUTH = "https://davidanaya1.pythonanywhere.com/api/auth"
+API_BASE = "https://davidanaya1.pythonanywhere.com/api/sqlite/negocio"
 
 # ---- Guardamos token en sesión ----
 if "token" not in st.session_state:
